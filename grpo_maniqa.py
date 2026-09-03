@@ -189,3 +189,129 @@ def calc_maniqa_score(
             all_rewards.append(
                 maniqa_score
             )
+
+
+###### initialize reward model
+    preprocess_val = None
+    processor = None
+    reward_model = None
+
+
+    # ========================================================
+    # MANIQA
+    # ========================================================
+
+    if args.use_maniqa:
+
+        # ----------------------------------------------
+        # 把本地 MANIQA repo 加入 Python path
+        #
+        # 例如：
+        # ./MANIQA/
+        #     models/
+        #         maniqa.py
+        #         swin.py
+        # ----------------------------------------------
+
+        maniqa_root = os.path.abspath(
+            args.maniqa_root
+        )
+
+        if not os.path.isdir(maniqa_root):
+            raise FileNotFoundError(
+                f"MANIQA root not found: "
+                f"{maniqa_root}"
+            )
+
+        if maniqa_root not in sys.path:
+            sys.path.insert(
+                0,
+                maniqa_root
+            )
+
+        # 与官方 predict_one_image.py 一样
+        from models.maniqa import MANIQA
+
+
+        # ----------------------------------------------
+        # 创建模型
+        #
+        # 参数完全沿用官方
+        # predict_one_image.py
+        # ----------------------------------------------
+
+        reward_model = MANIQA(
+            embed_dim=768,
+            num_outputs=1,
+            dim_mlp=768,
+            patch_size=8,
+            img_size=224,
+            window_size=4,
+            depths=[2, 2],
+            num_heads=[4, 4],
+            num_tab=2,
+            scale=0.8,
+        )
+
+
+        # ----------------------------------------------
+        # 本地 checkpoint
+        # ----------------------------------------------
+
+        if not os.path.isfile(
+            args.maniqa_ckpt_path
+        ):
+            raise FileNotFoundError(
+                f"MANIQA checkpoint not found: "
+                f"{args.maniqa_ckpt_path}"
+            )
+
+
+        # 官方：
+        #
+        # net.load_state_dict(
+        #     torch.load(config.ckpt_path),
+        #     strict=False
+        # )
+        #
+        # 这里保持相同思路。
+        # ----------------------------------------------
+
+        checkpoint = torch.load(
+            args.maniqa_ckpt_path,
+            map_location="cpu"
+        )
+
+        reward_model.load_state_dict(
+            checkpoint,
+            strict=False
+        )
+
+
+        # ----------------------------------------------
+        # MANIQA 只做 reward inference
+        # ----------------------------------------------
+
+        reward_model.requires_grad_(
+            False
+        )
+
+        reward_model = reward_model.to(
+            device
+        )
+
+        reward_model.eval()
+
+
+        if rank == 0:
+            print(
+                "MANIQA reward model loaded: "
+                f"{args.maniqa_ckpt_path}"
+            )
+
+
+    # ========================================================
+    # 原来的 HPSv2
+    # ========================================================
+
+    if args.use_hpsv2:
