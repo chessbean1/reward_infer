@@ -168,3 +168,24 @@ def calc_maniqa_score(
     )
 
     return avg_score
+
+
+
+#####sample from reference
+        if args.use_maniqa:
+
+            image_path = (
+                f"./images/flux_{rank}_{index}.png"
+            )
+
+            maniqa_score = calc_maniqa_score(
+                image_path=image_path,
+                reward_model=reward_model,
+                device=device,
+                num_crops=args.maniqa_num_crops,
+                crop_seed=args.maniqa_crop_seed,
+            )
+
+            all_rewards.append(
+                maniqa_score
+            )
