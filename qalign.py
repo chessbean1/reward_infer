@@ -17,14 +17,14 @@ output_csv = "./qalign_scores.csv"
 
 
 # ============================================================
-# 选择模型
+# 同时加载两个模型
 # ============================================================
 
-# 图像质量评分
-scorer = QAlignScorer()
+# 图像质量
+quality_scorer = QAlignScorer()
 
-# 如果你想测试美学质量，则把上面一行注释掉，使用下面这一行
-# scorer = QAlignAestheticScorer()
+# 图像美学
+aesthetic_scorer = QAlignAestheticScorer()
 
 
 # ============================================================
@@ -32,9 +32,6 @@ scorer = QAlignScorer()
 # ============================================================
 
 def find_image(folder, keyword):
-    """
-    在 folder 中寻找文件名包含 keyword 的图片
-    """
 
     image_exts = (
         ".jpg",
@@ -69,7 +66,7 @@ with open(txt_path, "r", encoding="utf-8") as f:
 
 
 # ============================================================
-# 遍历并打分
+# 遍历、打分并保存
 # ============================================================
 
 with open(
@@ -84,8 +81,10 @@ with open(
     # CSV 表头
     writer.writerow([
         "prompt",
-        "teacher_score",
-        "student_score"
+        "teacher_quality",
+        "student_quality",
+        "teacher_aesthetic",
+        "student_aesthetic"
     ])
 
     for prompt in prompts:
@@ -106,19 +105,15 @@ with open(
 
 
         # ----------------------------------------------------
-        # 检查是否找到
+        # 检查图片
         # ----------------------------------------------------
 
         if teacher_path is None:
-            print(
-                f"[Warning] teacher image not found: {prompt}"
-            )
+            print(f"[Warning] teacher image not found: {prompt}")
             continue
 
         if student_path is None:
-            print(
-                f"[Warning] student image not found: {prompt}"
-            )
+            print(f"[Warning] student image not found: {prompt}")
             continue
 
 
@@ -135,22 +130,37 @@ with open(
         ).convert("RGB")
 
 
-        # ----------------------------------------------------
-        # 两张图片一次性打分
-        #
-        # scores[0] = teacher
-        # scores[1] = student
-        # ----------------------------------------------------
-
+        # 顺序：
+        # 0 -> teacher
+        # 1 -> student
         img_list = [
             teacher_img,
             student_img
         ]
 
-        scores = scorer(img_list).tolist()
 
-        teacher_score = scores[0]
-        student_score = scores[1]
+        # ----------------------------------------------------
+        # 图像质量打分
+        # ----------------------------------------------------
+
+        quality_scores = quality_scorer(
+            img_list
+        ).tolist()
+
+        teacher_quality = quality_scores[0]
+        student_quality = quality_scores[1]
+
+
+        # ----------------------------------------------------
+        # 图像美学打分
+        # ----------------------------------------------------
+
+        aesthetic_scores = aesthetic_scorer(
+            img_list
+        ).tolist()
+
+        teacher_aesthetic = aesthetic_scores[0]
+        student_aesthetic = aesthetic_scores[1]
 
 
         # ----------------------------------------------------
@@ -159,8 +169,12 @@ with open(
 
         print(
             f"{prompt} | "
-            f"teacher: {teacher_score:.6f} | "
-            f"student: {student_score:.6f}"
+            f"Quality - "
+            f"teacher: {teacher_quality:.6f}, "
+            f"student: {student_quality:.6f} | "
+            f"Aesthetic - "
+            f"teacher: {teacher_aesthetic:.6f}, "
+            f"student: {student_aesthetic:.6f}"
         )
 
 
@@ -170,15 +184,19 @@ with open(
 
         writer.writerow([
             prompt,
-            teacher_score,
-            student_score
+            teacher_quality,
+            student_quality,
+            teacher_aesthetic,
+            student_aesthetic
         ])
 
-        # 防止运行到一半出错导致之前结果未写入
         fout.flush()
 
 
+        # ----------------------------------------------------
         # 关闭图片
+        # ----------------------------------------------------
+
         teacher_img.close()
         student_img.close()
 
