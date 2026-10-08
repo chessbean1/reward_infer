@@ -53,3 +53,50 @@ Wfinal=Wstudent+λAΔWA+λBΔWBW_{\mathrm{final}}=W_{\mathrm{student}}+\lambda_A
 \(10\) Shah V, Ruiz N, Cole F, et al. ZipLoRA: Any Subject in Any Style by Effectively Merging LoRAs\(C\). European Conference on Computer Vision (ECCV), 2024. arxiv.org .
 
 \(11\) Zhong M, Shen Y, Wang S, et al. Multi-LoRA Composition for Image Generation\(EB/OL\). arXiv:2402.16843, 2024. arxiv.org .
+
+
+## 2.6.5 两步模型与教师模型微调
+
+在二阶段的研究中，本项目主要针对三步蒸馏模型开展基于 GRPO 的强化学习微调，通过直接对学生模型进行训练获得 LoRA 参数，并将其用于改善低步数模型的生成质量。该方案在三步模型上取得了一定的效果，因此，在三阶段初期，本项目尝试将相同的技术路线推广至两步蒸馏模型，即直接以两步学生模型作为强化学习的训练对象，通过奖励函数引导模型进一步优化图像质量。然而，初步实验发现，与微调前的两步学生模型相比，直接进行 GRPO 微调后的模型不仅未能稳定改善生成效果，反而在部分提示词下出现了图像质量劣化、主体结构异常以及细节失真等问题，表明原本适用于三步学生模型的微调方案难以直接迁移至两步模型。
+
+针对上述现象，本项目分析认为，其原因可能与两步蒸馏模型的采样特点及优化稳定性有关。相较于三步模型，两步模型需要在更少的采样次数内完成从初始噪声到目标图像的映射，单次采样所承担的生成任务更加复杂，模型对采样轨迹和参数扰动也可能更加敏感。由于蒸馏过程已经使模型形成了适用于特定时间步的生成映射，直接使用基于奖励的强化学习方法更新其参数，可能改变原有的采样轨迹，使模型在追求更高奖励的同时偏离蒸馏阶段学习到的生成分布。此外，两步模型缺少足够的中间去噪步骤来逐步修正生成偏差，因此强化学习带来的局部参数变化可能更容易在最终图像中表现为结构失真或质量下降。已有研究指出，直接对时间步蒸馏后的扩散模型采用常规微调目标，可能导致生成结果模糊或质量下降，需要针对少步生成过程设计专门的优化策略\(1\)。这一结论与本项目观察到的现象具有一定一致性，但两步模型直接进行 GRPO 微调时的具体劣化机制仍需进一步研究验证。
+
+为解决直接微调两步模型带来的质量下降问题，本项目进一步探索了将强化学习训练与学生模型部署相分离的方案，即不再直接更新两步学生模型的参数，而是首先在原始教师模型上进行 GRPO 微调，得到对应的 LoRA 参数，再将其加载至蒸馏后的两步学生模型中。LoRA 通过学习低秩参数增量实现对预训练模型的高效适配，具有训练开销低、参数量小以及便于独立加载的特点\(2\)。考虑到本项目的学生模型由教师模型蒸馏得到，二者在模型架构和参数空间上具有一定的继承关系，因此，教师模型上学习得到的参数增量有可能在学生模型中保留部分优化效果。
+
+实验结果表明，在本项目的模型设置下，直接对教师模型进行 GRPO 微调得到的 LoRA 能够有效迁移至两步学生模型。相比于直接对两步模型进行强化学习微调，该方案表现出更好的生成稳定性，在提升图像清晰度、改善局部细节和优化整体视觉效果的同时，能够更好地保持学生模型原有的主体结构和生成能力。分析认为，教师模型具有更加充分的采样过程和相对完整的生成能力，基于教师模型学习得到的奖励优化方向可能具有更好的稳定性和泛化能力，从而避免了直接优化两步模型时对其低步数生成轨迹造成过大扰动。需要指出的是，教师模型 LoRA 向学生模型的迁移效果与两者的架构兼容性及参数分布差异有关，不能认为该方法适用于任意教师—学生模型组合。
+
+综合上述实验，本阶段最终放弃了直接对两步学生模型进行 GRPO 微调的方案，转而采用**“教师模型强化学习微调—LoRA 参数迁移—学生模型推理”**的技术路线。在三阶段后续实验中，所有用于增强学生模型的奖励微调 LoRA 均通过对教师模型训练获得，再以适当权重加载至两步学生模型。这一方案既避免了直接微调两步模型时出现的质量劣化问题，又实现了强化学习优化能力向低步数学生模型的有效迁移，同时保留了学生模型原有的推理加速优势。
+
+## 2.6.6 不同奖励函数的探索
+
+在三阶段初期的模型评测中发现，尽管经过蒸馏和强化学习微调后的学生模型能够在部分客观评价指标上达到较好的结果，但其生成图像仍存在一些难以通过现有指标准确反映的质量问题，主要表现为主体清晰度不足、局部纹理失真以及背景细节过多等。尤其在部分复杂场景下，学生模型倾向于生成大量与主体语义关联较弱的背景纹理和装饰性细节，导致画面整体结构杂乱、主体不够突出，影响实际视觉效果。前期采用的 HPSv2 奖励模型主要基于大规模人类偏好数据学习图像的整体偏好关系，在文生图模型评价方面具有较好的泛化能力\(3\)。然而，本项目的初步测试表明，HPSv2 对上述局部质量问题的识别能力存在一定局限，部分情况下甚至可能对包含大量冗余细节的图像给出较高评分，因此仅依靠 HPSv2 难以有效解决此类问题。
+
+为寻找更加适合当前模型质量问题的奖励函数，本阶段进一步调研了多种图像质量与人类偏好评价模型，包括 HPSv2\(3\)、MANIQA\(4\)、PickScore_v1\(5\)、Q-Align\(6\) 以及 MPS\(7\)。其中，HPSv2 和 PickScore 均基于人类偏好数据进行训练，主要用于评估生成图像与人类整体偏好之间的一致性；MANIQA 是一种基于多维注意力机制的无参考图像质量评价模型，通过建模图像不同区域之间的空间与通道特征关系，预测图像的感知质量，在图像失真评价任务中具有较好的表现；Q-Align 则利用大型多模态模型，通过离散文本定义的质量等级学习与人类主观评价相一致的视觉质量评分；MPS（Multi-dimensional Preference Score）进一步将人类偏好划分为美学质量、语义一致性、细节质量以及整体偏好等多个维度，尝试实现更细粒度的文生图评价。上述方法分别从整体偏好、感知质量和多维度视觉评价等角度提供不同的优化信号，具有作为强化学习奖励函数的潜力。([arxiv.org][1], [openaccess.thecvf.com][2], [papers.nips.cc][3], [proceedings.mlr.press][4], [openaccess.thecvf.com][5])
+
+在具体实验中，本项目选取初期主观评测中出现明显问题的提示词及其对应的教师模型、学生模型生成图像，分别使用上述奖励模型进行评分，并比较各模型对教师与学生图像的质量排序是否符合人工评测结论。实验结果表明，不同奖励函数对当前模型质量问题的识别能力存在明显差异。其中，MANIQA 对问题图像表现出了较好的区分能力，在所测试的典型问题样例中，教师模型生成图像的 MANIQA 评分高于对应学生模型，与主观评测中教师模型画面更加清晰、背景更加自然、局部失真更少的判断基本一致。这说明 MANIQA 能够在一定程度上反映学生模型存在的感知质量问题，为后续针对性优化提供有效的奖励信号。
+
+相比之下，PickScore_v1、Q-Align 和 MPS 在本项目测试样例中的评分结果与人工评测结论未能形成稳定一致的对应关系。对于存在明显背景冗杂或不合理细节的图像，这些奖励模型在部分样例中认为教师模型更优，而在另外一些样例中则给予学生模型更高的评分，未能稳定地将背景过度复杂的图像判定为较低质量。分析认为，这可能与不同奖励模型的训练目标以及对图像质量的关注维度有关。PickScore 主要学习用户对生成图像的整体偏好，未针对背景冗余等特定失真问题进行显式建模\(5\)；Q-Align 虽然能够进行视觉质量评价，但其评分目标是学习通用场景下的主观质量等级，未必能够准确反映本项目所关注的特定生成缺陷\(6\)；MPS 虽然引入了细节质量等评价维度，但其目标仍然是预测多维度人类偏好，而细节丰富程度与细节合理性之间并不总是具有一致关系\(7\)。因此，在当前测试样例中，上述奖励模型未能表现出足够稳定的针对性区分能力。需要说明的是，该结论仅反映不同奖励模型在本项目特定问题图像上的表现，并不意味着这些方法在一般图像质量评价任务中缺乏有效性。
+
+综合上述测试结果，本阶段最终选择 MANIQA 作为针对图像清晰度不足、局部失真以及背景过于复杂等问题的补充奖励函数，并将其引入基于 GRPO 的强化学习微调流程。具体而言，本项目以 MANIQA 评分作为强化学习的奖励信号，对教师模型进行独立训练，得到面向感知质量优化的 LoRA 参数，再将其加载至蒸馏后的学生模型。后续实验表明，采用 MANIQA 奖励训练得到的 LoRA 能够在一定程度上改善学生模型的图像清晰度，减少不必要的背景细节，使生成图像在主体突出程度、局部纹理合理性和整体视觉协调性方面得到改善。与此同时，考虑到 MANIQA 主要关注图像感知质量，而 HPSv2 更侧重整体人类偏好，本阶段进一步将两种奖励函数独立训练得到的 LoRA 进行加权融合，使两者在不同质量维度上的优化效果形成互补。最终，本项目采用 HPSv2 与 MANIQA 双奖励函数独立训练、双 LoRA 加权融合的方案，在保留模型整体生成能力的同时，针对性改善低步数学生模型中存在的图像失真和背景冗杂问题。
+
+## 参考文献
+
+\(1\) Miao Z, Yang Z, Lin K, et al. Tuning Timestep-Distilled Diffusion Model Using Pairwise Sample Optimization\(C\). International Conference on Learning Representations (ICLR), 2025. [https\://arxiv.org/abs/2410.03190](https://arxiv.org/abs/2410.03190).
+
+\(2\) Hu E J, Shen Y, Wallis P, et al. LoRA: Low-Rank Adaptation of Large Language Models\(C\). International Conference on Learning Representations (ICLR), 2022. [https\://arxiv.org/abs/2106.09685](https://arxiv.org/abs/2106.09685).
+
+\(3\) Wu X, Hao Y, Sun K, et al. Human Preference Score v2: A Solid Benchmark for Evaluating Human Preferences of Text-to-Image Synthesis\(EB/OL\). arXiv:2306.09341, 2023. [https\://arxiv.org/abs/2306.09341](https://arxiv.org/abs/2306.09341).
+
+\(4\) Yang S, Wu T, Shi S, et al. MANIQA: Multi-Dimension Attention Network for No-Reference Image Quality Assessment\(C\). Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW), 2022: 1191–1200. [https\://arxiv.org/abs/2204.08958](https://arxiv.org/abs/2204.08958).
+
+\(5\) Kirstain Y, Polyak A, Singer U, et al. Pick-a-Pic: An Open Dataset of User Preferences for Text-to-Image Generation\(C\). Advances in Neural Information Processing Systems (NeurIPS), 2023, 36. [https\://arxiv.org/abs/2305.01569](https://arxiv.org/abs/2305.01569).
+
+\(6\) Wu H, Zhang Z, Zhang W, et al. Q-Align: Teaching LMMs for Visual Scoring via Discrete Text-Defined Levels\(C\). Proceedings of the 41st International Conference on Machine Learning (ICML), PMLR 235, 2024: 54015–54029. [https\://arxiv.org/abs/2312.17090](https://arxiv.org/abs/2312.17090).
+
+\(7\) Zhang S, Wang B, Wu J, et al. Learning Multi-Dimensional Human Preference for Text-to-Image Generation\(C\). Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2024: 8018–8027. [https\://arxiv.org/abs/2405.14705](https://arxiv.org/abs/2405.14705).
+
+[1]: https://arxiv.org/abs/2306.09341 "Human Preference Score v2: A Solid Benchmark for Evaluating Human Preferences of Text-to-Image Synthesis"
+[2]: https://openaccess.thecvf.com/content/CVPR2022W/NTIRE/html/Yang_MANIQA_Multi-Dimension_Attention_Network_for_No-Reference_Image_Quality_Assessment_CVPRW_2022_paper.html "CVPR 2022 Open Access Repository"
+[3]: https://papers.nips.cc/paper_files/paper/2023/hash/73aacd8b3b05b4b503d58310b523553c-Abstract-Conference.html "Pick-a-Pic: An Open Dataset of User Preferences for Text-to-Image Generation"
+[4]: https://proceedings.mlr.press/v235/wu24ah.html "Q-Align: Teaching LMMs for Visual Scoring via Discrete Text-Defined Levels"
+[5]: https://openaccess.thecvf.com/content/CVPR2024/html/Zhang_Learning_Multi-Dimensional_Human_Preference_for_Text-to-Image_Generation_CVPR_2024_paper.html "CVPR 2024 Open Access Repository"
